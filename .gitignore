@@ -1,0 +1,9 @@
+.idea
+docs/Makefile
+docs/make.bat
+src/dynasigml.egg-info
+docs/_build
+docs/_templates
+docs/_static
+dist
+
