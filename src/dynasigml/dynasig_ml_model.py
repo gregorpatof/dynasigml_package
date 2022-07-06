@@ -403,16 +403,16 @@ def get_performance_report_lasso(best_training, best_params_training, best_testi
                                  train_best_test, best_test_model):
     report = ["Best training R²: {:.2f} with alpha={} and beta={}".format(best_training, best_params_training[1],
                                                                               best_params_training[0])]
-    report.append("Best testing (predictive) R²: {:.2f} with alpha={} and beta={}".format(best_testing,
-                                                                                          best_params_testing[1],
-                                                                                          best_params_testing[0]))
+    report.append("Best testing (predictive) R²: {:.2f} with alpha={} and beta={} (associated training R²:{:.2f})"
+                  .format(best_testing, best_params_testing[1], best_params_testing[0], train_best_test))
     return report
 
 
 def get_performance_report_mlp(best_training, best_beta_training, best_testing, best_beta_testing, train_best_test,
                            best_test_model):
     report = ["Best training R²: {:.2f} with beta={}".format(best_training, best_beta_training)]
-    report.append("Best testing (predictive) R²: {:.2f} with beta={}".format(best_testing, best_beta_testing))
+    report.append("Best testing (predictive) R²: {:.2f} with beta={} (associated training R²:{:.2f})".format(
+                  best_testing, best_beta_testing, train_best_test))
     return report
 
 
