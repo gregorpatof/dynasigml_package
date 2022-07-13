@@ -389,12 +389,14 @@ class DynaSigML_Model:
         enc = ENCoM(wt_pdb_file, solve=False)
         n = len(enc.mol.masses)
         lasso_mod = self.get_best_params_lasso()[-1]
-        coefs = lasso_mod.coef_[-n:]
-        coefs = np.array(coefs)
+        coefs_og = lasso_mod.coef_[-n:]
+        coefs = np.array(coefs_og)
         coefs /= np.max(np.abs(coefs))
         enc.set_bfactors(np.abs(coefs))
         enc.set_occupancy(coefs)
         enc._write_to_file(output_pdb_file)
+        return coefs_og
+
 
 
 
