@@ -108,7 +108,8 @@ class DynaSigML_Model:
         self.n = len(self.dynasigdf.files_list)
         self.file_ids = [id_func(filename) for filename in self.dynasigdf.files_list]
         if train_ids is not None:
-            assert len(train_ids) + len(test_ids) == self.n
+            if test_ids is None:
+                raise ValueError("Training set ids specified but not testing set ids (the reverse should be done).")
         elif test_ids is not None:
             train_ids = set([x for x in self.file_ids if x not in test_ids])
             assert len(train_ids) + len(test_ids) == self.n
