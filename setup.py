@@ -8,7 +8,7 @@ with open(os.path.join(HERE, "README.md")) as f:
 
 setuptools.setup(
     name="dynasigml",
-    version="1.0.2",
+    version="1.0.4",
     author="Olivier Mailhot",
     description="DynaSig-ML",
     long_description=README,

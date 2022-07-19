@@ -42,11 +42,13 @@ class DynaSigML_Model:
             mlp_stats_dict (dict): Performance of MLP models in dictionary format.
             standardization (ndarray): Transformation to apply to new predictors to standardize them (mean,
                                        standard deviation for every column).
+            verbose (bool): If True, information will be printed throughout the training and testing of ML models.
+            save_testing (bool): If True, testing set predictions will be saved for every trained model.
     """
 
     def __init__(self, dynasigdf_file, alphas=None, test_ids=None, train_ids=None, id_func=None, test_prop=0.2,
                  n_layers=2, layer_size=None, predictor_columns=None, target_column=None, max_iter_lasso=1000,
-                 max_iter_mlp=200):
+                 max_iter_mlp=200, verbose=False, save_testing=False):
         """Constructor for the DynaSigML_Model class.
 
         Args:
@@ -68,6 +70,8 @@ class DynaSigML_Model:
             target_column (str, optional): The str name of the column to predict.
             max_iter_lasso (int, optional): Maximum number of LASSO iterations.
             max_iter_mlp (int, optional): Maximum number of MLP iterations.
+            verbose (bool, optional): If True, info will be printed.
+            save_testing (bool, optional): If True, testing set predictions are saved.
             """
         self.dynasigdf = load_pickled_dynasig_df(dynasigdf_file)
         if predictor_columns is None:
@@ -124,9 +128,15 @@ class DynaSigML_Model:
         self.layer_size = layer_size
         self.max_iter_lasso = max_iter_lasso
         self.max_iter_mlp = max_iter_mlp
+        self.verbose = verbose
+        self.save_testing = save_testing
         self.lasso_stats_dict = dict()
         self.mlp_stats_dict = dict()
         self.standardization_dict = dict()
+
+    def print_verbose(self, s):
+        if self.verbose:
+            print(s)
 
     def save_to_file(self, filename):
         self.id_func = None
@@ -154,6 +164,10 @@ class DynaSigML_Model:
                 self.lasso_stats_dict[beta][alpha]['Training_R2'] = lasso_mod.score(train_data[:, self.pred_cols], train_data[:, self.targ_col])
                 self.lasso_stats_dict[beta][alpha]['Testing_R2'] = lasso_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
                 self.lasso_stats_dict[beta][alpha]['model'] = lasso_mod
+                if self.save_testing:
+                    self.lasso_stats_dict[beta][alpha]['test_preds'] = [test_data[:, self.targ_col],
+                                                                        lasso_mod.predict(test_data[:, self.pred_cols])]
+                self.print_verbose("Finished training LASSO model with beta={} and alpha={}".format(beta, alpha))
         warnings.filterwarnings("default")
 
     def train_linear_model(self):
@@ -190,6 +204,10 @@ class DynaSigML_Model:
             self.mlp_stats_dict[beta]['Training_R2'] = mlp_mod.score(train_data[:, self.pred_cols], train_data[:, self.targ_col])
             self.mlp_stats_dict[beta]['Testing_R2'] = mlp_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
             self.mlp_stats_dict[beta]['model'] = mlp_mod
+            if self.save_testing:
+                self.mlp_stats_dict[beta]['test_preds'] = [test_data[:, self.targ_col],
+                                                           mlp_mod.predict(test_data[:, self.pred_cols])]
+            self.print_verbose("Finished training MLP with beta={}".format(beta))
         warnings.filterwarnings("default")
 
     def get_best_params_lasso(self):
@@ -301,6 +319,13 @@ class DynaSigML_Model:
             f.write("variant predicted measured\n")
             for i in indices:
                 f.write("{} {} {}\n".format(self.test_ids[i], preds[i], reals[i]))
+        if self.save_testing:
+            with open("{}/mlp_testing_preds_full.df".format(folder), "w") as f:
+                f.write("beta variant predicted measured\n")
+                for beta in self.mlp_stats_dict:
+                    sreals, spreds = self.mlp_stats_dict[beta]['test_preds']
+                    for variant, pred, real in zip(self.test_ids, spreds, sreals):
+                        f.write("{} {} {} {}\n".format(beta, variant, pred, real))
 
     def _make_lasso_graphs(self, folder):
         best_training, best_params_training, best_testing, best_params_testing, train_best_test, best_test_model = \
@@ -357,6 +382,15 @@ class DynaSigML_Model:
         plt.xlabel("Log beta")
         plt.ylabel("Best predictive R²")
         plt.savefig("{}/lasso_testing_r2_beta.png".format(folder))
+
+        if self.save_testing:
+            with open("{}/lasso_testing_preds_full.df".format(folder), "w") as f:
+                f.write("beta alpha variant predicted measured\n")
+                for beta in self.lasso_stats_dict:
+                    for alpha in self.lasso_stats_dict[beta]:
+                        sreals, spreds = self.lasso_stats_dict[beta][alpha]['test_preds']
+                        for variant, pred, real in zip(self.test_ids, spreds, sreals):
+                            f.write("{} {} {} {} {}\n".format(beta, alpha, variant, pred, real))
 
     def predict_lasso(self, data_array):
         assert len(data_array[0]) == len(self.pred_cols)
