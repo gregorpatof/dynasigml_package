@@ -56,7 +56,7 @@ class DynaSigDF:
     """
 
     def __init__(self, files_list, exp_measures, exp_labels, output_name, id_func=None, beta_values=None, models=None,
-                 models_labels=None, added_atypes_list=None, added_massdef_list=None, use_svib=False):
+                 models_labels=None, added_atypes_list=None, added_massdef_list=None, use_svib=False, verbose=False):
         """Constructor for the DynaSigDF class.
 
         Args:
@@ -82,6 +82,7 @@ class DynaSigDF:
             use_svib (bool, optional): If True, the vibrational entropy will be computed and added as a potential
                                        predictor variable. Defaults to False because usually the Entropic Signature is
                                        enough for the model to capture the vibrational entropy.
+            verbose (bool, optional): If True, progress will be printed. False by default.
         """
         if models is None:
             from nrgten.encom import ENCoM
@@ -118,6 +119,7 @@ class DynaSigDF:
         self._fill_index_params_dicts()
         self.data_array = None
         self.dynasigs_masslabels = None
+        self.verbose = verbose
         self._compute_dynasig_df()
         self._pickle()
 
@@ -161,6 +163,25 @@ class DynaSigDF:
             new_array[i] = self.data_array[index]
         return new_array
 
+    def get_covmat(self, beta):
+        dynasig_indices = self.get_dynasig_indices()
+        data = self.get_data_array(self.get_file_ids(), beta)
+        data = data[:, dynasig_indices]
+        for col in range(data.shape[1]):
+            mean = np.mean(data[:, col])
+            sd = np.std(data[:, col])
+            data[:, col] -= mean
+            if sd > 0:
+                data[:, col] /= sd
+        return np.cov(data, rowvar=False)
+
+    def write_covmat(self, beta, filename):
+        covmat = self.get_covmat(beta)
+        with open(filename, 'w') as f:
+            f.write(" ".join([str(x) for x in range(1, len(self.get_dynasig_indices())+1)]) + "\n")
+            for row in covmat:
+                f.write(" ".join([str(x) for x in row]) + "\n")
+
     def get_column_index(self, exp_label):
         for i, lab in enumerate(self.exp_labels):
             if lab == exp_label:
@@ -177,6 +198,10 @@ class DynaSigDF:
         else:
             start = 1 + self.n_exp
         return [x for x in range(start, start + len(self.dynasigs_masslabels))]
+
+    def _print_verbose(self, s):
+        if self.verbose:
+            print(s)
 
     def _compute_dynasig_df(self):
         first_flag = True
@@ -220,6 +245,7 @@ class DynaSigDF:
                     else:
                         self.data_array[counter][1+self.n_exp:] = enm.compute_bfactors_boltzmann(beta=beta_val)
                     counter += 1
+            self._print_verbose("{} done!".format(filename))
 
     def add_other_dynasig_df(self, other):
         if not self._properties_are_matching(other):

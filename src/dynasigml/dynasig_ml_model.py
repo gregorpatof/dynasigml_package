@@ -46,7 +46,7 @@ class DynaSigML_Model:
             save_testing (bool): If True, testing set predictions will be saved for every trained model.
     """
 
-    def __init__(self, dynasigdf_file, alphas=None, test_ids=None, train_ids=None, id_func=None, test_prop=0.2,
+    def __init__(self, dynasigdf_file, alphas=None, betas=None, test_ids=None, train_ids=None, id_func=None, test_prop=0.2,
                  n_layers=2, layer_size=None, predictor_columns=None, target_column=None, max_iter_lasso=1000,
                  max_iter_mlp=200, verbose=False, save_testing=False):
         """Constructor for the DynaSigML_Model class.
@@ -54,6 +54,8 @@ class DynaSigML_Model:
         Args:
             dynasigdf_file (str): The filename for the DynaSigDF object.
             alphas (list, optional): The list of different regularization strengths to be used in LASSO regression.
+            betas (list, optional): The list of thermodynamic scaling factors to use. If not supplied, all values in the
+                                    DynaSigDF object are tested.
             test_ids (list, optional): The file identifiers of sequence variants in the testing set.
             train_ids (list, optional): The file identifiers of sequence variants in the training set. Can be omitted
                                         if test_ids is supplied, but test_ids cannot be omitted if train_ids is
@@ -124,6 +126,10 @@ class DynaSigML_Model:
         self.test_ids = test_ids
         self.train_ids = train_ids
         self.alphas = alphas
+        if betas is None:
+            self.beta_values = self.dynasigdf.beta_values
+        else:
+            self.beta_values = betas
         self.n_layers = n_layers
         self.layer_size = layer_size
         self.max_iter_lasso = max_iter_lasso
@@ -144,7 +150,7 @@ class DynaSigML_Model:
             pickle.dump(self, f)
 
     def train_test_lasso(self):
-        for beta in self.dynasigdf.beta_values:
+        for beta in self.beta_values:
             train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
             test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
             train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
@@ -171,7 +177,7 @@ class DynaSigML_Model:
         warnings.filterwarnings("default")
 
     def train_linear_model(self):
-        for beta in self.dynasigdf.beta_values:
+        for beta in self.beta_values:
             train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
             test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
             train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
@@ -186,7 +192,7 @@ class DynaSigML_Model:
         for i in range(self.n_layers):
             layer_sizes.append(self.layer_size)
         layer_sizes = tuple(layer_sizes)
-        for beta in self.dynasigdf.beta_values:
+        for beta in self.beta_values:
             train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
             test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
             train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
@@ -280,9 +286,9 @@ class DynaSigML_Model:
     def make_graphs(self, folder):
         if not os.path.isdir(folder):
             os.mkdir(folder)
-        if self.lasso_stats_dict is not None:
+        if len(self.lasso_stats_dict) != 0:
             self._make_lasso_graphs(folder)
-        if self.mlp_stats_dict is not None:
+        if len(self.mlp_stats_dict) != 0:
             self._make_mlp_graphs(folder)
 
     def _make_mlp_graphs(self, folder):
@@ -470,6 +476,7 @@ def standardize_data(train_data, test_data, cols):
 
 def adjusted_r2(r2, n, p):
     return 1 - (1-r2)*(n-1)/(n-p-1)
+
 
 def _get_ef(reals, preds, prop=0.1):
     data = np.zeros((len(reals), 2))

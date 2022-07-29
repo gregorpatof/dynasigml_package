@@ -8,7 +8,7 @@ with open(os.path.join(HERE, "README.md")) as f:
 
 setuptools.setup(
     name="dynasigml",
-    version="1.0.4",
+    version="1.0.7",
     author="Olivier Mailhot",
     description="DynaSig-ML",
     long_description=README,
@@ -17,7 +17,7 @@ setuptools.setup(
     packages=setuptools.find_packages('src'),
     package_dir={'':'src'},
 
-    install_requires=['numpy', 'nrgten>=1.1.14', 'sklearn'],
+    install_requires=['numpy', 'nrgten>=1.1.14', 'sklearn', 'matplotlib'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
