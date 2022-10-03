@@ -105,7 +105,11 @@ class DynaSigDF:
             assert len(added_atypes_list) == len(files_list) == len(added_massdef_list)
         self.files_list = files_list
         self.exp_measures = exp_measures
-        self.exp_labels = exp_labels
+        if isinstance(exp_labels, str):
+            self.exp_labels = [exp_labels]
+        else:
+            assert isinstance(exp_labels, list)
+            self.exp_labels = exp_labels
         self.outname = output_name
         self.models = models
         self.models_labels = models_labels
@@ -162,6 +166,33 @@ class DynaSigDF:
             index = self.params_dict[file_id][mod_lab][beta]
             new_array[i] = self.data_array[index]
         return new_array
+
+    def _add_predictor_column(self, newcol_name, fileids_values_dict):
+        if len(self.models_labels) != 1:
+            raise ValueError("Adding predictor column is not supported for more than one model")
+        assert newcol_name != 'svib' and newcol_name != 'dynasig'
+        mod_lab = self.models_labels[0]
+        new_array = np.zeros((self.data_array.shape[0], self.data_array.shape[1]+1))
+        new_array[:, 0] = self.data_array[:, 0]  # beta values
+        new_array[:, 1] = self.data_array[:, 1]  # target column
+        if isinstance(self.exp_labels, list):
+            for exp_lab in self.exp_labels:
+                assert newcol_name != exp_lab
+            self.exp_labels = self.exp_labels + [newcol_name]
+        else:
+            assert newcol_name != self.exp_labels
+            self.exp_labels = [self.exp_labels, newcol_name]
+        self.n_exp = len(self.exp_labels)
+        for file_id in fileids_values_dict:
+            newval = fileids_values_dict[file_id]
+            for beta in self.beta_values:
+                index = self.params_dict[file_id][mod_lab][beta]
+                for j in range(self.n_exp - 1):
+                    new_array[index, 2+j] = self.data_array[index, 2+j]
+                new_array[index, self.n_exp] = newval
+                new_array[index, 1+self.n_exp:] = self.data_array[index, self.n_exp:]
+
+        self.data_array = new_array
 
     def get_covmat(self, beta):
         dynasig_indices = self.get_dynasig_indices()

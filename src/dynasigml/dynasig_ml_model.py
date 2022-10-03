@@ -1,5 +1,5 @@
 from dynasigml.dynasig_df import load_pickled_dynasig_df
-from sklearn.linear_model import Lasso, LinearRegression
+from sklearn.linear_model import Lasso, LinearRegression, ElasticNet
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.neural_network import MLPRegressor
 import numpy as np
@@ -152,7 +152,10 @@ class DynaSigML_Model:
     def train_test_lasso(self):
         for beta in self.beta_values:
             train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
-            test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
+            if len(self.test_ids) > 0:
+                test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
+            else:
+                test_data = None
             train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
             self.standardization_dict[beta] = standardization
             self.lasso_stats_dict[beta] = dict()
@@ -168,11 +171,13 @@ class DynaSigML_Model:
                     lasso_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
                     self.lasso_stats_dict[beta][alpha]['Converged'] = False
                 self.lasso_stats_dict[beta][alpha]['Training_R2'] = lasso_mod.score(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-                self.lasso_stats_dict[beta][alpha]['Testing_R2'] = lasso_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
                 self.lasso_stats_dict[beta][alpha]['model'] = lasso_mod
-                if self.save_testing:
-                    self.lasso_stats_dict[beta][alpha]['test_preds'] = [test_data[:, self.targ_col],
-                                                                        lasso_mod.predict(test_data[:, self.pred_cols])]
+                if test_data is not None:
+                    self.lasso_stats_dict[beta][alpha]['Testing_R2'] = lasso_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
+
+                    if self.save_testing:
+                        self.lasso_stats_dict[beta][alpha]['test_preds'] = [test_data[:, self.targ_col],
+                                                                            lasso_mod.predict(test_data[:, self.pred_cols])]
                 self.print_verbose("Finished training LASSO model with beta={} and alpha={}".format(beta, alpha))
         warnings.filterwarnings("default")
 
@@ -187,32 +192,43 @@ class DynaSigML_Model:
             mod.fit(all_data[:, self.pred_cols], all_data[:, self.targ_col])
             print(beta, adjusted_r2(mod.score(all_data[:, self.pred_cols], all_data[:, self.targ_col]), len(all_data), all_data.shape[1]-2))
 
+    def _train_mlp(self, beta, layer_sizes):
+        train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
+        if len(self.test_ids) > 0:
+            test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
+        else:
+            test_data = None
+        train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
+        self.standardization_dict[beta] = standardization
+        self.mlp_stats_dict[beta] = dict()
+        mlp_mod = MLPRegressor(layer_sizes, max_iter=self.max_iter_mlp)
+        warnings.filterwarnings("error")
+        try:
+            mlp_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
+            self.mlp_stats_dict[beta]['Converged'] = True
+        except ConvergenceWarning:
+            warnings.filterwarnings("ignore")
+            mlp_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
+            self.mlp_stats_dict[beta]['Converged'] = False
+        self.mlp_stats_dict[beta]['Training_R2'] = mlp_mod.score(train_data[:, self.pred_cols],
+                                                                 train_data[:, self.targ_col])
+        return mlp_mod, test_data
+
+
     def train_test_mlp(self):
         layer_sizes = []
         for i in range(self.n_layers):
             layer_sizes.append(self.layer_size)
         layer_sizes = tuple(layer_sizes)
         for beta in self.beta_values:
-            train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
-            test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
-            train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
-            self.standardization_dict[beta] = standardization
-            self.mlp_stats_dict[beta] = dict()
-            mlp_mod = MLPRegressor(layer_sizes, max_iter=self.max_iter_mlp)
-            warnings.filterwarnings("error")
-            try:
-                mlp_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-                self.mlp_stats_dict[beta]['Converged'] = True
-            except ConvergenceWarning:
-                warnings.filterwarnings("ignore")
-                mlp_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-                self.mlp_stats_dict[beta]['Converged'] = False
-            self.mlp_stats_dict[beta]['Training_R2'] = mlp_mod.score(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-            self.mlp_stats_dict[beta]['Testing_R2'] = mlp_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
+            mlp_mod, test_data = self._train_mlp(beta, layer_sizes)
             self.mlp_stats_dict[beta]['model'] = mlp_mod
-            if self.save_testing:
-                self.mlp_stats_dict[beta]['test_preds'] = [test_data[:, self.targ_col],
-                                                           mlp_mod.predict(test_data[:, self.pred_cols])]
+            if test_data is not None:
+                self.mlp_stats_dict[beta]['Testing_R2'] = mlp_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
+
+                if self.save_testing:
+                    self.mlp_stats_dict[beta]['test_preds'] = [test_data[:, self.targ_col],
+                                                               mlp_mod.predict(test_data[:, self.pred_cols])]
             self.print_verbose("Finished training MLP with beta={}".format(beta))
         warnings.filterwarnings("default")
 
@@ -426,10 +442,19 @@ class DynaSigML_Model:
                 data_array[:, i] /= sd
         return best_mlp_model.predict(data_array)
 
-    def map_coefficients(self, wt_pdb_file, output_pdb_file):
-        enc = ENCoM(wt_pdb_file, solve=False)
+    def map_coefficients(self, wt_pdb_file, output_pdb_file, beta=None, alpha=None, added_massdef=None, added_atypes=None):
+        if added_massdef is None:
+            enc = ENCoM(wt_pdb_file, solve=False)
+        else:
+            assert added_atypes is not None
+            enc = ENCoM(wt_pdb_file, solve=False, added_massdef=added_massdef, added_atypes=added_atypes)
         n = len(enc.mol.masses)
-        lasso_mod = self.get_best_params_lasso()[-1]
+        if beta is None:
+            assert alpha is None
+            lasso_mod = self.get_best_params_lasso()[-1]
+        else:
+            assert alpha is not None
+            lasso_mod = self.lasso_stats_dict[beta][alpha]['model']
         coefs_og = lasso_mod.coef_[-n:]
         coefs = np.array(coefs_og)
         coefs /= np.max(np.abs(coefs))
@@ -463,13 +488,21 @@ def standardize_data(train_data, test_data, cols):
     standardization = np.zeros((len(cols), 2))
     count = 0
     for col in cols:
-        mean = np.mean(np.concatenate((train_data[:, col], test_data[:, col])))
-        sd = np.std(np.concatenate((train_data[:, col], test_data[:, col])))
-        standardization[count] = [mean, sd]
-        for data in [train_data, test_data]:
-            data[:, col] -= mean
+        if test_data is not None:
+            mean = np.mean(np.concatenate((train_data[:, col], test_data[:, col])))
+            sd = np.std(np.concatenate((train_data[:, col], test_data[:, col])))
+            standardization[count] = [mean, sd]
+            for data in [train_data, test_data]:
+                data[:, col] -= mean
+                if sd != 0:
+                    data[:, col] /= sd
+        else:
+            mean = np.mean(train_data[:, col])
+            sd = np.std(train_data[:, col])
+            standardization[count] = [mean, sd]
+            train_data[:, col] -= mean
             if sd != 0:
-                data[:, col] /= sd
+                train_data[:, col] /= sd
         count += 1
     return train_data, test_data, standardization
 
