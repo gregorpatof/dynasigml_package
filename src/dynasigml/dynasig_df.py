@@ -20,6 +20,22 @@ def combine_pickled_dynasig_dfs(pickle_files_list, output_name):
     return combined_dsdf
 
 
+def build_subset_dsdf(dsdf, files_list, outname):
+    assert isinstance(dsdf, DynaSigDF)
+    sub_exp_measures = []
+    exp_index_dict = dict()
+    for i, fi in enumerate(dsdf.get_file_ids()):
+        exp_index_dict[fi] = i
+    for fi in files_list:
+        if fi not in dsdf.params_dict:
+            raise ValueError("This file not in the orignial DSDF: {}".format(fi))
+        sub_exp_measures.append(dsdf.exp_measures[exp_index_dict[fi]])
+    assert len(sub_exp_measures) == len(files_list)
+    sub_dsdf = DynaSigDF(files_list, sub_exp_measures, dsdf.exp_labels, outname, beta_values=dsdf.beta_values,
+                         models=dsdf.models, models_labels=dsdf.models_labels, use_svib=dsdf.use_svib, from_other=dsdf)
+    return sub_dsdf
+
+
 class DynaSigDF:
     """Class representing a set of Dynamical Signatures (DynaSigs), which can be outputted as a data frame.
 
@@ -56,7 +72,8 @@ class DynaSigDF:
     """
 
     def __init__(self, files_list, exp_measures, exp_labels, output_name, id_func=None, beta_values=None, models=None,
-                 models_labels=None, added_atypes_list=None, added_massdef_list=None, use_svib=False, verbose=False):
+                 models_labels=None, added_atypes_list=None, added_massdef_list=None, use_svib=False, verbose=False,
+                 from_other=None, use_localsig=False):
         """Constructor for the DynaSigDF class.
 
         Args:
@@ -91,7 +108,10 @@ class DynaSigDF:
         if beta_values is None:
             beta_values = [1]
         if id_func is None:
-            id_func = lambda x: x.split('/')[-1]
+            if from_other is not None:
+                id_func = lambda x: x
+            else:
+                id_func = lambda x: x.split('/')[-1]
         assert isinstance(beta_values, list) and isinstance(models, list) and isinstance(models_labels, list)
         assert len(models) == len(models_labels)
         assert len(files_list) == len(exp_measures)
@@ -124,7 +144,8 @@ class DynaSigDF:
         self.data_array = None
         self.dynasigs_masslabels = None
         self.verbose = verbose
-        self._compute_dynasig_df()
+        self.use_localsig = use_localsig
+        self._compute_dynasig_df(from_other)
         self._pickle()
 
     def _pickle(self):
@@ -172,7 +193,7 @@ class DynaSigDF:
             raise ValueError("Adding predictor column is not supported for more than one model")
         assert newcol_name != 'svib' and newcol_name != 'dynasig'
         mod_lab = self.models_labels[0]
-        new_array = np.zeros((self.data_array.shape[0], self.data_array.shape[1]+1))
+        new_array = np.zeros((self.data_array.shape[0], self.data_array.shape[1] + 1))
         new_array[:, 0] = self.data_array[:, 0]  # beta values
         new_array[:, 1] = self.data_array[:, 1]  # target column
         if isinstance(self.exp_labels, list):
@@ -188,9 +209,9 @@ class DynaSigDF:
             for beta in self.beta_values:
                 index = self.params_dict[file_id][mod_lab][beta]
                 for j in range(self.n_exp - 1):
-                    new_array[index, 2+j] = self.data_array[index, 2+j]
+                    new_array[index, 2 + j] = self.data_array[index, 2 + j]
                 new_array[index, self.n_exp] = newval
-                new_array[index, 1+self.n_exp:] = self.data_array[index, self.n_exp:]
+                new_array[index, 1 + self.n_exp:] = self.data_array[index, self.n_exp:]
 
         self.data_array = new_array
 
@@ -209,7 +230,7 @@ class DynaSigDF:
     def write_covmat(self, beta, filename):
         covmat = self.get_covmat(beta)
         with open(filename, 'w') as f:
-            f.write(" ".join([str(x) for x in range(1, len(self.get_dynasig_indices())+1)]) + "\n")
+            f.write(" ".join([str(x) for x in range(1, len(self.get_dynasig_indices()) + 1)]) + "\n")
             for row in covmat:
                 f.write(" ".join([str(x) for x in row]) + "\n")
 
@@ -234,12 +255,26 @@ class DynaSigDF:
         if self.verbose:
             print(s)
 
-    def _compute_dynasig_df(self):
+    def _compute_dynasig_df(self, from_other=None):
+        if from_other is not None:
+            assert isinstance(from_other, DynaSigDF)
+            self.dynasigs_masslabels = from_other.dynasigs_masslabels
         first_flag = True
         counter = 0
+
         for i, filename in enumerate(self.files_list):
             filename_id = self.id_func(filename)
             for mod, mod_lab in zip(self.models, self.models_labels):
+                if from_other is not None:
+                    if first_flag:
+                        self.data_array = np.zeros((len(self.files_list) * len(self.models_labels) *
+                                                    len(self.beta_values), from_other.data_array.shape[1]))
+                        first_flag = False
+                    for beta_val in self.beta_values:
+                        self.data_array[counter] = \
+                            from_other.data_array[from_other.params_dict[filename_id][mod_lab][beta_val]]
+                        counter += 1
+                    continue
                 if self.added_atypes_list is None:
                     enm = mod(filename)
                 else:
@@ -250,11 +285,11 @@ class DynaSigDF:
                 # only the mass name to allow for mutations
                 masslabels = [x.split('.')[-1] for x in enm.get_mass_labels()]
                 if first_flag:
-                    n_add = 1 # beta value
+                    n_add = 1  # beta value
                     if self.use_svib:
                         n_add += 1
                     n_add += self.n_exp
-                    self.data_array = np.zeros((np.max([x+1 for x in self.index_dict]), len(masslabels)+n_add))
+                    self.data_array = np.zeros((np.max([x + 1 for x in self.index_dict]), len(masslabels) + n_add))
                     first_flag = False
                 for beta_val in self.beta_values:
                     assert counter == self.params_dict[filename_id][mod_lab][beta_val]
@@ -267,22 +302,28 @@ class DynaSigDF:
                     self.data_array[counter][0] = beta_val
                     if isinstance(self.exp_measures[i], list):
                         for j in range(self.n_exp):
-                            self.data_array[counter][1+j] = self.exp_measures[i][j]
+                            self.data_array[counter][1 + j] = self.exp_measures[i][j]
                     else:
                         self.data_array[counter][1] = self.exp_measures[i]
                     if self.use_svib:
-                        self.data_array[counter][1+self.n_exp] = enm.compute_vib_entropy(beta=beta_val)
-                        self.data_array[counter][2+self.n_exp:] = enm.compute_bfactors_boltzmann(beta=beta_val)
+                        self.data_array[counter][1 + self.n_exp] = enm.compute_vib_entropy(beta=beta_val)
+                        if self.use_localsig:
+                            self.data_array[counter][2 + self.n_exp:] = enm.compute_local_signature(beta=beta_val)
+                        else:
+                            self.data_array[counter][2 + self.n_exp:] = enm.compute_bfactors_boltzmann(beta=beta_val)
                     else:
-                        self.data_array[counter][1+self.n_exp:] = enm.compute_bfactors_boltzmann(beta=beta_val)
+                        if self.use_localsig:
+                            self.data_array[counter][1 + self.n_exp:] = enm.compute_local_signature(beta=beta_val)
+                        else:
+                            self.data_array[counter][1 + self.n_exp:] = enm.compute_bfactors_boltzmann(beta=beta_val)
                     counter += 1
             self._print_verbose("{} done!".format(filename))
 
     def add_other_dynasig_df(self, other):
         if not self._properties_are_matching(other):
             raise ValueError("Trying to combine two DynaSigDF objects with unmatched properties: {} {}".format(
-                             self.outname, other.outname))
-        n = np.max([x+1 for x in self.index_dict])
+                self.outname, other.outname))
+        n = np.max([x + 1 for x in self.index_dict])
 
         for other_index in other.index_dict:
             self.index_dict[other_index + n] = other.index_dict[other_index].copy()
