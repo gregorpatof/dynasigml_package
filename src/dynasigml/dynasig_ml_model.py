@@ -1,7 +1,7 @@
 from dynasigml.dynasig_df import load_pickled_dynasig_df
-from sklearn.linear_model import Lasso, LinearRegression, ElasticNet
+from sklearn.linear_model import Lasso
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.neural_network import MLPRegressor
+from sklearn.base import BaseEstimator, clone
 import numpy as np
 import random
 import matplotlib.pyplot as plt
@@ -34,21 +34,17 @@ class DynaSigML_Model:
             test_ids (list): The file identifiers of sequence variants in the testing set.
             train_ids (list): The file identifiers of sequence variants in the training set.
             alphas (list): The list of different regularization strengths to be used in LASSO regression.
-            n_layers (int): The number of hidden layers in multilayer perceptrons (MLPs).
-            layer_size (int): The size of each MLP hidden layer.
             max_iter_lasso (int): Maximum number of LASSO iterations.
-            max_iter_mlp (int): Maximum number of MLP iterations.
             lasso_stats_dict (dict): Performance of LASSO models in dictionary format.
-            mlp_stats_dict (dict): Performance of MLP models in dictionary format.
-            standardization (ndarray): Transformation to apply to new predictors to standardize them (mean,
-                                       standard deviation for every column).
+            standardization_dict (dict): Transformation to apply to new predictors to standardize them (mean,
+                                         standard deviation for every column) for each beta value.
             verbose (bool): If True, information will be printed throughout the training and testing of ML models.
             save_testing (bool): If True, testing set predictions will be saved for every trained model.
     """
 
-    def __init__(self, dynasigdf_file, alphas=None, betas=None, test_ids=None, train_ids=None, id_func=None, test_prop=0.2,
-                 n_layers=2, layer_size=None, predictor_columns=None, target_column=None, max_iter_lasso=1000,
-                 max_iter_mlp=200, verbose=False, save_testing=False):
+    def __init__(self, dynasigdf_file, alphas=None, betas=None, test_ids=None, train_ids=None, id_func=None,
+                 test_prop=0.2, predictor_columns=None, target_column=None, verbose=False, save_testing=False,
+                 max_iter_lasso=1000, ml_models=None, ml_models_labels=None):
         """Constructor for the DynaSigML_Model class.
 
         Args:
@@ -65,15 +61,14 @@ class DynaSigML_Model:
                                           defaults to just the filename at the end of the path, minus the extension.
             test_prop: (float, optional): proportion of variants to use for the testing set (random sampling), if
                                           test_ids is not supplied.
-            n_layers (int, optional): The number of hidden layers in multilayer perceptrons (MLPs).
-            layer_size (int, optional): The size of each MLP hidden layer.
             predictor_columns (list, optional): A list of str names of the columns to be used as predictors in the ML
                                                 models. To select the whole Dynamical Signature, include 'dynasig'.
             target_column (str, optional): The str name of the column to predict.
-            max_iter_lasso (int, optional): Maximum number of LASSO iterations.
-            max_iter_mlp (int, optional): Maximum number of MLP iterations.
             verbose (bool, optional): If True, info will be printed.
             save_testing (bool, optional): If True, testing set predictions are saved.
+            max_iter_lasso (int, optional): Maximum number of LASSO iterations.
+            ml_models (list, optional): Additional sklearn ML models to run in addition to LASSO
+            ml_models_labels (list, optional): Labels (str) for added ML models
             """
         self.dynasigdf = load_pickled_dynasig_df(dynasigdf_file)
         if predictor_columns is None:
@@ -105,14 +100,13 @@ class DynaSigML_Model:
         else:
             assert isinstance(target_column, int)
         self.targ_col = target_column
-        if layer_size is None:
-            layer_size = len(self.pred_cols)
         if id_func is None:
             id_func = lambda x: x.split('/')[-1]
+        self.id_func = id_func
         if alphas is None:
             alphas = [2**x for x in range(-15, 1)]
         self.n = len(self.dynasigdf.files_list)
-        self.file_ids = [id_func(filename) for filename in self.dynasigdf.files_list]
+        self.file_ids = [self.id_func(filename) for filename in self.dynasigdf.files_list]
         if train_ids is not None:
             if test_ids is None:
                 raise ValueError("Training set ids specified but not testing set ids (the reverse should be done).")
@@ -130,15 +124,36 @@ class DynaSigML_Model:
             self.beta_values = self.dynasigdf.beta_values
         else:
             self.beta_values = betas
-        self.n_layers = n_layers
-        self.layer_size = layer_size
         self.max_iter_lasso = max_iter_lasso
-        self.max_iter_mlp = max_iter_mlp
         self.verbose = verbose
         self.save_testing = save_testing
         self.lasso_stats_dict = dict()
-        self.mlp_stats_dict = dict()
         self.standardization_dict = dict()
+        if ml_models is not None:
+            if ml_models_labels is None:
+                raise ValueError("Additional ML models supplied but no matching labels " +
+                                 "(add ml_models_labels=['your_label'] to the constructor).")
+            if isinstance(ml_models, list):
+                assert isinstance(ml_models_labels, list)
+                assert len(ml_models) == len(ml_models_labels)
+                if len(ml_models_labels) != len(set(ml_models_labels)):
+                    raise ValueError("ml_models_labels are not unique (each string identifier needs to be)")
+                for i in range(len(ml_models)):
+                    assert isinstance(ml_models[i], BaseEstimator)
+                    assert isinstance(ml_models_labels[i], str)
+            else:
+                assert isinstance(ml_models, BaseEstimator)
+                ml_models = [ml_models]
+                if isinstance(ml_models_labels, list):
+                    assert len(ml_models_labels) == 1
+                else:
+                    assert isinstance(ml_models_labels, str)
+                    ml_models_labels = [ml_models_labels]
+        elif ml_models_labels is not None:
+            raise ValueError("ml_models_labels supplied but no ml_models supplied")
+        self.ml_models = ml_models
+        self.ml_models_labels = ml_models_labels
+        self.ml_models_dict = dict()
 
     def print_verbose(self, s):
         if self.verbose:
@@ -149,178 +164,126 @@ class DynaSigML_Model:
         with open('{}.pickle'.format(filename), 'wb') as f:
             pickle.dump(self, f)
 
-    def train_test_lasso(self):
-        for beta in self.beta_values:
-            train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
-            if len(self.test_ids) > 0:
-                test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
-            else:
-                test_data = None
-            train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
-            self.standardization_dict[beta] = standardization
-            self.lasso_stats_dict[beta] = dict()
-            for alpha in self.alphas:
-                self.lasso_stats_dict[beta][alpha] = dict()
-                lasso_mod = Lasso(alpha=alpha, selection='random', max_iter=self.max_iter_lasso)
-                warnings.filterwarnings("error")
-                try:
-                    lasso_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-                    self.lasso_stats_dict[beta][alpha]['Converged'] = True
-                except ConvergenceWarning:
-                    warnings.filterwarnings("ignore")
-                    lasso_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-                    self.lasso_stats_dict[beta][alpha]['Converged'] = False
-                self.lasso_stats_dict[beta][alpha]['Training_R2'] = lasso_mod.score(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-                self.lasso_stats_dict[beta][alpha]['model'] = lasso_mod
-                if test_data is not None:
-                    self.lasso_stats_dict[beta][alpha]['Testing_R2'] = lasso_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
-
-                    if self.save_testing:
-                        self.lasso_stats_dict[beta][alpha]['test_preds'] = [test_data[:, self.targ_col],
-                                                                            lasso_mod.predict(test_data[:, self.pred_cols])]
-                self.print_verbose("Finished training LASSO model with beta={} and alpha={}".format(beta, alpha))
-        warnings.filterwarnings("default")
-
-    def train_linear_model(self):
-        for beta in self.beta_values:
-            train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
-            test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
-            train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
-            self.standardization_dict[beta] = standardization
-            all_data = np.concatenate((train_data, test_data))
-            mod = LinearRegression()
-            mod.fit(all_data[:, self.pred_cols], all_data[:, self.targ_col])
-            print(beta, adjusted_r2(mod.score(all_data[:, self.pred_cols], all_data[:, self.targ_col]), len(all_data), all_data.shape[1]-2))
-
-    def _train_mlp(self, beta, layer_sizes):
+    def get_train_test_std(self, beta):
         train_data = self.dynasigdf.get_data_array(self.train_ids, beta)
         if len(self.test_ids) > 0:
             test_data = self.dynasigdf.get_data_array(self.test_ids, beta)
         else:
             test_data = None
-        train_data, test_data, standardization = standardize_data(train_data, test_data, self.pred_cols)
-        self.standardization_dict[beta] = standardization
-        self.mlp_stats_dict[beta] = dict()
-        mlp_mod = MLPRegressor(layer_sizes, max_iter=self.max_iter_mlp)
+        return standardize_data(train_data, test_data, self.pred_cols)
+
+    def _fit_model(self, model, train_data, test_data, stats_dict):
         warnings.filterwarnings("error")
         try:
-            mlp_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-            self.mlp_stats_dict[beta]['Converged'] = True
+            model.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
+            stats_dict['Converged'] = True
         except ConvergenceWarning:
             warnings.filterwarnings("ignore")
-            mlp_mod.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
-            self.mlp_stats_dict[beta]['Converged'] = False
-        self.mlp_stats_dict[beta]['Training_R2'] = mlp_mod.score(train_data[:, self.pred_cols],
-                                                                 train_data[:, self.targ_col])
-        return mlp_mod, test_data
+            model.fit(train_data[:, self.pred_cols], train_data[:, self.targ_col])
+            stats_dict['Converged'] = False
+        stats_dict['Training_R2'] = model.score(train_data[:, self.pred_cols], train_data[:, self.targ_col])
+        stats_dict['model'] = model
+        if test_data is not None:
+            stats_dict['Testing_R2'] = model.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
 
-
-    def train_test_mlp(self):
-        layer_sizes = []
-        for i in range(self.n_layers):
-            layer_sizes.append(self.layer_size)
-        layer_sizes = tuple(layer_sizes)
-        for beta in self.beta_values:
-            mlp_mod, test_data = self._train_mlp(beta, layer_sizes)
-            self.mlp_stats_dict[beta]['model'] = mlp_mod
-            if test_data is not None:
-                self.mlp_stats_dict[beta]['Testing_R2'] = mlp_mod.score(test_data[:, self.pred_cols], test_data[:, self.targ_col])
-
-                if self.save_testing:
-                    self.mlp_stats_dict[beta]['test_preds'] = [test_data[:, self.targ_col],
-                                                               mlp_mod.predict(test_data[:, self.pred_cols])]
-            self.print_verbose("Finished training MLP with beta={}".format(beta))
+            if self.save_testing:
+                stats_dict['test_preds'] = [test_data[:, self.targ_col], model.predict(test_data[:, self.pred_cols])]
         warnings.filterwarnings("default")
 
+    def train_test_lasso(self):
+        for beta in self.beta_values:
+            train_data, test_data, standardization = self.get_train_test_std(beta)
+            self.standardization_dict[beta] = standardization
+            self.lasso_stats_dict[beta] = dict()
+            for alpha in self.alphas:
+                self.lasso_stats_dict[beta][alpha] = dict()
+                lasso_mod = Lasso(alpha=alpha, selection='random', max_iter=self.max_iter_lasso)
+                self._fit_model(lasso_mod, train_data, test_data, self.lasso_stats_dict[beta][alpha])
+                self.print_verbose("Finished training LASSO model with beta={} and alpha={}".format(beta, alpha))
+
+    def train_test_ml_models(self):
+        for label, model in zip(self.ml_models_labels, self.ml_models):
+            self.ml_models_dict[label] = dict()
+            for beta in self.beta_values:
+                train_data, test_data, standardization = self.get_train_test_std(beta)
+                self.ml_models_dict[label][beta] = dict()
+                mod = clone(model)
+                self._fit_model(mod, train_data, test_data, self.ml_models_dict[label][beta])
+                self.print_verbose("Finished training {} model with beta={}".format(label, beta))
+
     def get_best_params_lasso(self):
-        best_training = float('-Inf')
         best_testing = float('-Inf')
-        best_params_training = [None, None, None]
         best_params_testing = [None, None, None]
-        train_best_test = None
         best_test_model = None
+        train_best_test = None
         for beta in self.lasso_stats_dict:
             for alpha in self.lasso_stats_dict[beta]:
-                train_r2 = self.lasso_stats_dict[beta][alpha]['Training_R2']
                 test_r2 = self.lasso_stats_dict[beta][alpha]['Testing_R2']
-                if train_r2 > best_training:
-                    best_training = train_r2
-                    best_params_training = [beta, alpha, self.lasso_stats_dict[beta][alpha]['Converged']]
+                train_r2 = self.lasso_stats_dict[beta][alpha]['Training_R2']
                 if test_r2 > best_testing:
                     best_testing = test_r2
                     best_params_testing = [beta, alpha, self.lasso_stats_dict[beta][alpha]['Converged']]
                     train_best_test = train_r2
                     best_test_model = self.lasso_stats_dict[beta][alpha]['model']
-        return best_training, best_params_training, best_testing, best_params_testing, train_best_test, best_test_model
+        return best_testing, best_params_testing, train_best_test, best_test_model
 
-    def get_best_params_mlp(self):
-        best_training = float('-Inf')
+    def get_best_params_ml(self):
         best_testing = float('-Inf')
-        best_beta_training = None
         best_beta_testing = None
         train_best_test = None
         best_test_model = None
-        for beta in self.mlp_stats_dict:
-            train_r2 = self.mlp_stats_dict[beta]['Training_R2']
-            test_r2 = self.mlp_stats_dict[beta]['Testing_R2']
-            if train_r2 > best_training:
-                best_training = train_r2
-                best_beta_training = beta
-            if test_r2 > best_testing:
-                best_testing = test_r2
-                best_beta_testing = beta
-                train_best_test = train_r2
-                best_test_model = self.mlp_stats_dict[beta]['model']
-        return best_training, best_beta_training, best_testing, best_beta_testing, train_best_test, best_test_model
+        best_label_testing = None
+        for label in self.ml_models_dict:
+            for beta in self.ml_models_dict[label]:
+                train_r2 = self.ml_models_dict[label][beta]['Training_R2']
+                test_r2 = self.ml_models_dict[label][beta]['Testing_R2']
+                if test_r2 > best_testing:
+                    best_testing = test_r2
+                    best_beta_testing = beta
+                    train_best_test = train_r2
+                    best_label_testing = label
+                    best_test_model = self.ml_models_dict[label][beta]['model']
+        return best_testing, best_beta_testing, train_best_test, best_test_model, best_label_testing
 
     def performance_report(self):
         if self.lasso_stats_dict is not None:
             print("LASSO regression performance:")
             print("\n".join(get_performance_report_lasso(*self.get_best_params_lasso())))
-        if self.mlp_stats_dict is not None:
-            print("MLP regressor performance:")
-            print("\n".join(get_performance_report_mlp(*self.get_best_params_mlp())))
+        if self.ml_models_dict is not None:
+            print("Other ML models performance:")
+            print("\n".join(get_performance_report_ml(*self.get_best_params_ml())))
 
     def get_best_beta_values(self):
         best_betas = []
-        if self.lasso_stats_dict is not None:
+        if len(self.lasso_stats_dict) > 0:
             best_betas.append(self.get_best_beta_lasso())
-        if self.mlp_stats_dict is not None:
-            beta_mlp = self.get_best_beta_mlp()
-            if beta_mlp != best_betas[0]:
-                best_betas.append(beta_mlp)
+        if len(self.ml_models_dict) > 0:
+            beta_ml = self.get_best_beta_ml()
+            if beta_ml != best_betas[0]:
+                best_betas.append(beta_ml)
         return best_betas
 
     def get_best_beta_lasso(self):
-        return self.get_best_params_lasso()[3][0]
+        return self.get_best_params_lasso()[1][0]
 
-    def get_best_beta_mlp(self):
-        return self.get_best_params_mlp()[3]
-
-
+    def get_best_beta_ml(self):
+        return self.get_best_params_ml()[3]
 
     def make_graphs(self, folder):
         if not os.path.isdir(folder):
             os.mkdir(folder)
         if len(self.lasso_stats_dict) != 0:
             self._make_lasso_graphs(folder)
-        if len(self.mlp_stats_dict) != 0:
-            self._make_mlp_graphs(folder)
+        if len(self.ml_models_dict) != 0:
+            self._make_ml_graphs(folder)
 
-    def _make_mlp_graphs(self, folder):
-        best_training, best_beta_training, best_testing, best_beta_testing, train_best_test, best_test_model = \
-        self.get_best_params_mlp()
-        betas = []
-        test_r2 = []
-        for beta in self.mlp_stats_dict:
-            betas.append(np.log(beta))
-            test_r2.append(self.mlp_stats_dict[beta]['Testing_R2'])
+    def _make_plot(self, betas, test_r2s, best_beta_testing, folder, label, best_test_model, best_testing, model_dict):
         plt.clf()
-        plt.plot(betas, test_r2)
+        plt.plot(np.log(betas), test_r2s)
         plt.ylim(ymin=0, ymax=1)
         plt.xlabel("Log beta")
         plt.ylabel("Predictive R²")
-        plt.savefig("{}/mlp_testing_r2_beta.png".format(folder))
+        plt.savefig("{}/{}_testing_r2_beta.png".format(folder, label))
 
         test_data = self.dynasigdf.get_data_array(self.test_ids, best_beta_testing)
         train_data = self.dynasigdf.get_data_array(self.train_ids, best_beta_testing)
@@ -335,23 +298,39 @@ class DynaSigML_Model:
         text = "R² = {:.2f}\nEF10% = {:.2f}".format(best_testing, _get_ef(reals, preds))
         plt.gca().text(0.05, 0.95, text, transform=plt.gca().transAxes,
                        fontsize=14, verticalalignment='top')
-        plt.savefig("{}/mlp_testing_performance.png".format(folder))
+        plt.savefig("{}/{}_testing_performance.png".format(folder, label))
         indices = np.argsort(-preds)
-        with open("{}/mlp_testing_performance.df".format(folder), "w") as f:
+        with open("{}/{}_testing_performance.df".format(folder, label), "w") as f:
             f.write("variant predicted measured\n")
             for i in indices:
                 f.write("{} {} {}\n".format(self.test_ids[i], preds[i], reals[i]))
         if self.save_testing:
-            with open("{}/mlp_testing_preds_full.df".format(folder), "w") as f:
+            with open("{}/{}_testing_preds_full.df".format(folder, label), "w") as f:
                 f.write("beta variant predicted measured\n")
-                for beta in self.mlp_stats_dict:
-                    sreals, spreds = self.mlp_stats_dict[beta]['test_preds']
+                for beta in model_dict:
+                    sreals, spreds = model_dict[beta]['test_preds']
                     for variant, pred, real in zip(self.test_ids, spreds, sreals):
                         f.write("{} {} {} {}\n".format(beta, variant, pred, real))
 
+    def _make_ml_graphs(self, folder):
+        for label in self.ml_models_dict:
+            best_beta_testing = None
+            betas = []
+            test_r2s = []
+            best_testing = float('-Inf')
+            best_test_model = None
+            for beta in self.ml_models_dict[label]:
+                betas.append(beta)
+                test_r2s.append(self.ml_models_dict[label][beta]['Testing_R2'])
+                if test_r2s[-1] > best_testing:
+                    best_testing = test_r2s[-1]
+                    best_test_model = self.ml_models_dict[label][beta]['model']
+                    best_beta_testing = beta
+            self._make_plot(betas, test_r2s, best_beta_testing, folder, label,
+                            best_test_model, best_testing, self.ml_models_dict[label])
+
     def _make_lasso_graphs(self, folder):
-        best_training, best_params_training, best_testing, best_params_testing, train_best_test, best_test_model = \
-        self.get_best_params_lasso()
+        best_testing, best_params_testing, train_best_test, best_test_model = self.get_best_params_lasso()
         best_beta = best_params_testing[0]
         x = []
         test_r2 = []
@@ -418,7 +397,7 @@ class DynaSigML_Model:
         assert len(data_array[0]) == len(self.pred_cols)
         best_params = self.get_best_params_lasso()
         best_lasso_model = best_params[-1]
-        best_beta = best_params[3][0]
+        best_beta = best_params[1][0]
         standardization = self.standardization_dict[best_beta]
         assert len(standardization) == len(self.pred_cols)
         for i in range(data_array.shape[1]):
@@ -428,11 +407,11 @@ class DynaSigML_Model:
                 data_array[:, i] /= sd
         return best_lasso_model.predict(data_array)
 
-    def predict_mlp(self, data_array):
+    def predict_ml(self, data_array):
         assert len(data_array[0]) == len(self.pred_cols)
-        best_params = self.get_best_params_mlp()
-        best_mlp_model = best_params[-1]
-        best_beta = best_params[3]
+        best_params = self.get_best_params_ml()
+        best_ml_model = best_params[-1]
+        best_beta = best_params[1]
         standardization = self.standardization_dict[best_beta]
         assert len(standardization) == len(self.pred_cols)
         for i in range(data_array.shape[1]):
@@ -440,9 +419,10 @@ class DynaSigML_Model:
             data_array[:, i] -= mean
             if sd > 0:
                 data_array[:, i] /= sd
-        return best_mlp_model.predict(data_array)
+        return best_ml_model.predict(data_array)
 
-    def map_coefficients(self, wt_pdb_file, output_pdb_file, beta=None, alpha=None, added_massdef=None, added_atypes=None):
+    def map_coefficients(self, wt_pdb_file, output_pdb_file, beta=None, alpha=None, added_massdef=None,
+                         added_atypes=None):
         if added_massdef is None:
             enc = ENCoM(wt_pdb_file, solve=False)
         else:
@@ -464,23 +444,15 @@ class DynaSigML_Model:
         return coefs_og
 
 
-
-
-
-def get_performance_report_lasso(best_training, best_params_training, best_testing, best_params_testing,
-                                 train_best_test, best_test_model):
-    report = ["Best training R²: {:.2f} with alpha={} and beta={}".format(best_training, best_params_training[1],
-                                                                              best_params_training[0])]
-    report.append("Best testing (predictive) R²: {:.2f} with alpha={} and beta={} (associated training R²:{:.2f})"
-                  .format(best_testing, best_params_testing[1], best_params_testing[0], train_best_test))
+def get_performance_report_lasso(best_testing, best_params_testing, train_best_test, best_test_model):
+    report = ["Best testing (predictive) R²: {:.2f} with alpha={} and beta={} (associated training R²:{:.2f})"
+              .format(best_testing, best_params_testing[1], best_params_testing[0], train_best_test)]
     return report
 
 
-def get_performance_report_mlp(best_training, best_beta_training, best_testing, best_beta_testing, train_best_test,
-                           best_test_model):
-    report = ["Best training R²: {:.2f} with beta={}".format(best_training, best_beta_training)]
-    report.append("Best testing (predictive) R²: {:.2f} with beta={} (associated training R²:{:.2f})".format(
-                  best_testing, best_beta_testing, train_best_test))
+def get_performance_report_ml(best_testing, best_beta_testing, train_best_test, best_test_model, best_label_testing):
+    report = ["Best testing (predictive) R²: {:.2f} with {} model, beta={}, (associated training R²:{:.2f})".format(
+        best_testing, best_label_testing, best_beta_testing, train_best_test)]
     return report
 
 
@@ -523,8 +495,3 @@ def _get_ef(reals, preds, prop=0.1):
         if data[-i, 0] >= thresh:
             count += 1
     return float(count)/(max_index-1) / prop
-
-
-
-
-

@@ -6,4 +6,4 @@ docs/_build
 docs/_templates
 docs/_static
 dist
-
+src/dynasigml/__pycache__
