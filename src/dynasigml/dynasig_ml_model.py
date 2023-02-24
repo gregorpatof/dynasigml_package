@@ -44,7 +44,7 @@ class DynaSigML_Model:
 
     def __init__(self, dynasigdf_file, alphas=None, betas=None, test_ids=None, train_ids=None, id_func=None,
                  test_prop=0.2, predictor_columns=None, target_column=None, verbose=False, save_testing=False,
-                 max_iter_lasso=1000, ml_models=None, ml_models_labels=None):
+                 max_iter_lasso=1000, ml_models=None, ml_models_labels=None, measured_property="value"):
         """Constructor for the DynaSigML_Model class.
 
         Args:
@@ -69,6 +69,7 @@ class DynaSigML_Model:
             max_iter_lasso (int, optional): Maximum number of LASSO iterations.
             ml_models (list, optional): Additional sklearn ML models to run in addition to LASSO
             ml_models_labels (list, optional): Labels (str) for added ML models
+            measured_property (str, optional): the name of the measured and predicted property
             """
         self.dynasigdf = load_pickled_dynasig_df(dynasigdf_file)
         if predictor_columns is None:
@@ -127,6 +128,7 @@ class DynaSigML_Model:
         self.max_iter_lasso = max_iter_lasso
         self.verbose = verbose
         self.save_testing = save_testing
+        self.measured_property = measured_property
         self.lasso_stats_dict = dict()
         self.standardization_dict = dict()
         if ml_models is not None:
@@ -293,8 +295,8 @@ class DynaSigML_Model:
         reals = test_data[:, self.targ_col]
         plt.clf()
         plt.scatter(preds, reals, alpha=0.5)
-        plt.xlabel("Predicted value")
-        plt.ylabel("Experimental value")
+        plt.xlabel("Predicted {}".format(self.measured_property))
+        plt.ylabel("Experimental {}".format(self.measured_property))
         text = "R² = {:.2f}\nEF10% = {:.2f}".format(best_testing, _get_ef(reals, preds))
         plt.gca().text(0.05, 0.95, text, transform=plt.gca().transAxes,
                        fontsize=14, verticalalignment='top')
@@ -355,8 +357,8 @@ class DynaSigML_Model:
         reals = test_data[:, self.targ_col]
         plt.clf()
         plt.scatter(preds, reals, alpha=0.5)
-        plt.xlabel("Predicted value")
-        plt.ylabel("Experimental value")
+        plt.xlabel("Predicted {}".format(self.measured_property))
+        plt.ylabel("Experimental {}".format(self.measured_property))
         text = "R² = {:.2f}\nEF10% = {:.2f}".format(best_testing, _get_ef(reals, preds))
         plt.gca().text(0.05, 0.95, text, transform=plt.gca().transAxes,
                        fontsize=14, verticalalignment='top')
