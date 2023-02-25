@@ -13,7 +13,7 @@ Welcome to DynaSig-ML's documentation!
    introduction
    how_to_cite
    install_guide
-   vim2_example
+   mir125a_example
    code_doc
 
 

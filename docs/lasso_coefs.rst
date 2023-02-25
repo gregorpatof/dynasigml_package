@@ -8,8 +8,11 @@ PyMOL to visualize the coefficients mapped in 3D::
 
     from dynasigml.dynasig_ml_model import DynaSigML_Model, load_dynasigml_model_from_file
 
-    dsml_model = load_dynasigml_model_from_file("dsml_model.pickle")
-    dsml_model.map_coefficients("mutants_modeller/4bz3_WT.pdb", "coefficients.pdb")
+    dsml_model_inverted = load_dynasigml_model_from_file("dsml_model_inverted.pickle")
+    dsml_model_inverted.map_coefficients("mir125a_variants/mir125a_WT.pdb", "coefficients_inverted.pdb")
+
+    dsml_model_hard = load_dynasigml_model_from_file("dsml_model_hard.pickle")
+    dsml_model_hard.map_coefficients("mir125a_variants/mir125a_WT.pdb", "coefficients_hard.pdb")
 
 In order to visualize the coefficients in 3D, the new PDB file needs to be opened in PyMOL and these two commands
 need to be entered::
@@ -17,6 +20,6 @@ need to be entered::
     spectrum q, blue_white_red, minimum=-1, maximum=1
     cartoon putty
 
-This will show the backbone of the protein with varying diameter corresponding to the absolute value of the
-coefficient. The color will be blue for negative coefficients, white for zero coefficients and red for positive
-coefficients.
+This will show the backbone of the biomolecule with varying diameter corresponding to the absolute value of the
+coefficient (works better on proteins than RNA). The color will be blue for negative coefficients, white for zero
+coefficients and red for positive coefficients.
