@@ -3,7 +3,7 @@ DynaSig-ML ("Dynamical Signatures - Machine Learning") is a Python
 package allowing the easy study of dynamics-function relationships in biomolecules.
 
 Online documentation, step-by-step tutorial and installation guide: https://dynasigml.readthedocs.io  
-Companion repository for the tutorial: https://github.com/gregorpatof/dynasigml_vim2_example
+Companion repository for the tutorial: https://github.com/gregorpatof/dynasigml_mir125a_example
 
 If you use DynaSig-ML, please cite these two articles:  
 https://doi.org/10.1101/2022.07.06.499058  
