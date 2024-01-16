@@ -17,7 +17,7 @@ setuptools.setup(
     packages=setuptools.find_packages('src'),
     package_dir={'':'src'},
 
-    install_requires=['numpy', 'nrgten>=1.1.14', 'sklearn', 'matplotlib'],
+    install_requires=['numpy', 'nrgten>=1.1.14', 'scikit-learn', 'matplotlib'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
